@@ -1,0 +1,114 @@
+# Snowflake connection — overridable via environment variable
+# Matches the connection name in ~/.snowflake/config.toml
+connection := env_var_or_default("SNOW_CONNECTION", "default")
+
+# ── Shared setup ────────────────────────────────────────────────────────────
+
+# One-time setup: database, schema, stage, event table
+setup:
+    snow sql -f shared/setup.sql --connection {{connection}}
+
+# ── Option 1: Stored Procedure ─────────────────────────────────────────────
+
+# Upload handler file to stage, then create the procedure
+deploy-proc:
+    snow stage copy 1_stored_proc/scd1_proc.py \
+        @PY_LOGS_DEMO.PUBLIC.CODE_STAGE/ \
+        --overwrite --connection {{connection}}
+    snow sql -f 1_stored_proc/deploy.sql --connection {{connection}}
+
+# Call the procedure
+run-proc:
+    snow sql -q "CALL PY_LOGS_DEMO.PUBLIC.SCD1_MERGE('PY_LOGS_DEMO.PUBLIC.SCD1_SOURCE', 'PY_LOGS_DEMO.PUBLIC.SCD1_TARGET', 'ID', 'NAME,STATUS');" --connection {{connection}}
+
+# ── Option 1: Error scenarios ──────────────────────────────────────────────
+
+# SQL error: add a column to source, run proc (INSERT fails on column count
+# mismatch), then drop the column to restore the table.
+run-proc-broken-sql:
+    snow sql -q "ALTER TABLE PY_LOGS_DEMO.PUBLIC.SCD1_SOURCE ADD COLUMN INFO VARCHAR;" \
+        --connection {{connection}}
+    -snow sql -q "CALL PY_LOGS_DEMO.PUBLIC.SCD1_MERGE('PY_LOGS_DEMO.PUBLIC.SCD1_SOURCE', 'PY_LOGS_DEMO.PUBLIC.SCD1_TARGET', 'ID', 'NAME,STATUS');" \
+        --connection {{connection}}
+    snow sql -q "ALTER TABLE PY_LOGS_DEMO.PUBLIC.SCD1_SOURCE DROP COLUMN INFO;" \
+        --connection {{connection}}
+
+# Python error: call proc with a non-existent PK column. The validation in
+# run_scd1 detects the missing column, logs source/target column overlap, and raises.
+# Nothing to restore — no state was changed.
+run-proc-broken-python:
+    -snow sql -q "CALL PY_LOGS_DEMO.PUBLIC.SCD1_MERGE('PY_LOGS_DEMO.PUBLIC.SCD1_SOURCE', 'PY_LOGS_DEMO.PUBLIC.SCD1_TARGET', 'NONEXISTENT_ID', 'NAME,STATUS');" \
+        --connection {{connection}}
+
+# ── Option 2: Notebook ─────────────────────────────────────────────────────
+
+# Upload notebook file to stage, then create the notebook object
+deploy-notebook:
+    snow stage copy 2_notebook/scd1_notebook.ipynb \
+        @PY_LOGS_DEMO.PUBLIC.CODE_STAGE/2_notebook/ \
+        --overwrite --connection {{connection}}
+    snow sql -f 2_notebook/deploy.sql --connection {{connection}}
+
+# Run the notebook non-interactively
+run-notebook:
+    snow sql -q "\
+        EXECUTE NOTEBOOK PY_LOGS_DEMO.PUBLIC.SCD1_NOTEBOOK(\
+            'PY_LOGS_DEMO.PUBLIC.SCD1_SOURCE',\
+            'PY_LOGS_DEMO.PUBLIC.SCD1_TARGET',\
+            'ID',\
+            'NAME,STATUS'\
+        );" \
+        --connection {{connection}}
+
+# ── Option 2: Error scenarios ──────────────────────────────────────────────
+
+# SQL error: add a column to source, run notebook (INSERT fails on column count
+# mismatch), then drop the column to restore the table.
+run-notebook-broken-sql:
+    snow sql -q "ALTER TABLE PY_LOGS_DEMO.PUBLIC.SCD1_SOURCE ADD COLUMN INFO VARCHAR;" \
+        --connection {{connection}}
+    -snow sql -q "\
+        EXECUTE NOTEBOOK PY_LOGS_DEMO.PUBLIC.SCD1_NOTEBOOK(\
+            'PY_LOGS_DEMO.PUBLIC.SCD1_SOURCE',\
+            'PY_LOGS_DEMO.PUBLIC.SCD1_TARGET',\
+            'ID',\
+            'NAME,STATUS'\
+        );" \
+        --connection {{connection}}
+    snow sql -q "ALTER TABLE PY_LOGS_DEMO.PUBLIC.SCD1_SOURCE DROP COLUMN INFO;" \
+        --connection {{connection}}
+
+# Python error: run notebook with a non-existent PK column. The validation in
+# run_scd1 detects the missing column, logs source/target column overlap, and raises.
+# Nothing to restore — no state was changed.
+run-notebook-broken-python:
+    -snow sql -q "\
+        EXECUTE NOTEBOOK PY_LOGS_DEMO.PUBLIC.SCD1_NOTEBOOK(\
+            'PY_LOGS_DEMO.PUBLIC.SCD1_SOURCE',\
+            'PY_LOGS_DEMO.PUBLIC.SCD1_TARGET',\
+            'NONEXISTENT_ID',\
+            'NAME,STATUS'\
+        );" \
+        --connection {{connection}}
+
+# ── Option 3: ML Job ───────────────────────────────────────────────────────
+
+# Submit the job and wait for it to finish; logs are printed on completion
+run-job:
+    SNOW_CONNECTION={{connection}} uv run 3_ml_job/scd1_job.py
+
+# SQL error: add a column to source, run job (INSERT fails), then drop the column
+run-job-broken-sql:
+    snow sql -q "ALTER TABLE PY_LOGS_DEMO.PUBLIC.SCD1_SOURCE ADD COLUMN INFO VARCHAR;" \
+        --connection {{connection}}
+    -SNOW_CONNECTION={{connection}} uv run 3_ml_job/scd1_job.py
+    snow sql -q "ALTER TABLE PY_LOGS_DEMO.PUBLIC.SCD1_SOURCE DROP COLUMN INFO;" \
+        --connection {{connection}}
+
+# Python error: pass a non-existent PK column
+run-job-broken-python:
+    -SNOW_CONNECTION={{connection}} uv run 3_ml_job/scd1_job.py \
+        PY_LOGS_DEMO.PUBLIC.SCD1_SOURCE \
+        PY_LOGS_DEMO.PUBLIC.SCD1_TARGET \
+        NONEXISTENT_ID \
+        NAME,STATUS
