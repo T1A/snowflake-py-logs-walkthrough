@@ -20,7 +20,7 @@ We are using the same simple pipeline to illustrate each option.
 
 All three examples are using the same workload: a minimal **SCD Type 1 merge** where Python builds a `MERGE` statement from a config dictionary and executes it. The point is to have something realistic enough to generate meaningful logs and run history, while simulating a data engineering workload that does not require a large cluster for Python executions.
 
-A link to the source code is provided at the end of this article, or this article can also be read in the [source repository](https://github.com/T1A/snowflake-py-logs-walkthrough).
+A link to the source code is provided at the end of this article, or this article can also be read in the [source repository](https://github.com/T1A/snowflake-py-logs-walkthrough/blob/main/article.md).
 
 ## Option 1: Stored Procedures
 
